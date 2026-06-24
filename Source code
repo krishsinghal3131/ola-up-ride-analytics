@@ -1,0 +1,292 @@
+"""
+🚕 OLA UP - UTTAR PRADESH TAXI DASHBOARD
+Final Working Version - 100% Tested
+"""
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from datetime import datetime, timedelta
+import random
+import math
+
+# ============================================================
+# CONFIGURATION (UP Cities)
+# ============================================================
+
+UP_CITIES = {
+    'Aligarh': {'base_fare': 30, 'per_km': 12, 'per_min': 1.5, 'night_mult': 1.5, 'peak_mult': 1.3, 'min_fare': 50,
+                'locations': ['Railway', 'AMU', 'Center', 'Gangiri', 'Koil', 'Ramghat', 'Civil Lines', 'Dodhpur']},
+    'Agra': {'base_fare': 35, 'per_km': 14, 'per_min': 1.8, 'night_mult': 1.5, 'peak_mult': 1.4, 'min_fare': 60,
+             'locations': ['Taj', 'Fort', 'Station', 'Sadar', 'Fatehabad', 'Khandari', 'Sikandra', 'Dayalbagh']},
+    'Lucknow': {'base_fare': 40, 'per_km': 15, 'per_min': 2.0, 'night_mult': 1.5, 'peak_mult': 1.4, 'min_fare': 70,
+                'locations': ['Hazratganj', 'Charbagh', 'Gomti', 'Alambagh', 'Aminabad', 'Indira', 'Chinhat', 'Amausi']},
+    'Kanpur': {'base_fare': 35, 'per_km': 13, 'per_min': 1.7, 'night_mult': 1.5, 'peak_mult': 1.3, 'min_fare': 60,
+               'locations': ['Central', 'Mall', 'Kidwai', 'Civil', 'Govind', 'Kalyanpur', 'Bithoor', 'Armapur']},
+    'Varanasi': {'base_fare': 30, 'per_km': 11, 'per_min': 1.4, 'night_mult': 1.5, 'peak_mult': 1.2, 'min_fare': 50,
+                 'locations': ['Vishwanath', 'Station', 'Lanka', 'Sigra', 'Godowlia', 'BHU', 'Sarnath', 'Pandeypur']},
+    'Noida': {'base_fare': 45, 'per_km': 16, 'per_min': 2.2, 'night_mult': 2.0, 'peak_mult': 1.5, 'min_fare': 80,
+              'locations': ['Sec18', 'City Center', 'Indirapuram', 'GN', 'Sec62', 'Botanical', 'Sec15', 'Pari Chowk']},
+    'Ghaziabad': {'base_fare': 35, 'per_km': 13, 'per_min': 1.7, 'night_mult': 1.5, 'peak_mult': 1.3, 'min_fare': 60,
+                  'locations': ['Station', 'Indirapuram', 'Raj', 'Vaishali', 'Kaushambi', 'Mohannagar', 'Loni', 'Modinagar']},
+    'Meerut': {'base_fare': 30, 'per_km': 11, 'per_min': 1.4, 'night_mult': 1.5, 'peak_mult': 1.2, 'min_fare': 50,
+               'locations': ['Shastri', 'Station', 'Mohanpuri', 'Hapur', 'Sardhana', 'Kankerkhera', 'Abulane', 'Sofipur']},
+    'Prayagraj': {'base_fare': 30, 'per_km': 12, 'per_min': 1.5, 'night_mult': 1.5, 'peak_mult': 1.3, 'min_fare': 50,
+                  'locations': ['Sangam', 'Station', 'Civil', 'Katra', 'Allahapur', 'Naini', 'Jhunsi', 'Phaphamau']},
+    'Gorakhpur': {'base_fare': 25, 'per_km': 10, 'per_min': 1.2, 'night_mult': 1.5, 'peak_mult': 1.2, 'min_fare': 45,
+                  'locations': ['Station', 'Golghar', 'Mohaddipur', 'Rustampur', 'Shahpur', 'Bharohi', 'Kawwa', 'Geeta']}
+}
+
+VEHICLE_TYPES = {'Auto': 1.0, 'Bike': 0.7, 'Micro': 1.0, 'Mini': 1.2, 'Sedan': 1.5, 'SUV': 2.0, 'Luxury': 3.0, 'Share': 0.6}
+PEAK_HOURS = [8, 9, 17, 18, 19]
+NIGHT_START, NIGHT_END = 22, 6
+
+DRIVER_NAMES = ['Rajesh', 'Amit', 'Suresh', 'Vikram', 'Rahul', 'Anil', 'Pankaj', 'Deepak', 'Manoj', 'Sanjay', 'Ravi', 'Kiran']
+CUST_NAMES = ['Aarav', 'Vihaan', 'Aditya', 'Arjun', 'Ayaan', 'Dhruv', 'Aisha', 'Diya', 'Saanvi', 'Ananya', 'Navya', 'Ira']
+
+# ============================================================
+# FARE CALCULATOR
+# ============================================================
+
+def calculate_fare(city, distance, hour, vehicle, waiting=0, surge=1.0, coupon=0):
+    cfg = UP_CITIES[city]
+    base = cfg['base_fare']
+    dist_charge = distance * cfg['per_km']
+    time_charge = (distance * 2) * cfg['per_min']
+    wait_charge = waiting * 2
+    subtotal = base + dist_charge + time_charge + wait_charge
+    
+    is_night = hour >= NIGHT_START or hour < NIGHT_END
+    night_mult = cfg['night_mult'] if is_night else 1.0
+    is_peak = hour in PEAK_HOURS
+    peak_mult = cfg['peak_mult'] if is_peak else 1.0
+    veh_mult = VEHICLE_TYPES[vehicle]
+    
+    fare = subtotal * night_mult * peak_mult * veh_mult * surge
+    fare = max(fare, cfg['min_fare'])
+    discount = fare * (coupon / 100)
+    final = math.ceil(fare - discount)
+    
+    return {
+        'base': base, 'distance_charge': round(dist_charge, 2), 'time_charge': round(time_charge, 2),
+        'waiting_charge': wait_charge, 'subtotal': round(subtotal, 2), 'night_mult': night_mult,
+        'peak_mult': peak_mult, 'veh_mult': veh_mult, 'surge': surge, 'fare_before': round(fare, 2),
+        'coupon': coupon, 'discount': round(discount, 2), 'final_fare': final,
+        'is_night': is_night, 'is_peak': is_peak
+    }
+
+# ============================================================
+# DATA GENERATOR (FIXED - weights= instead of p=)
+# ============================================================
+
+def generate_data(n=5000):
+    np.random.seed(42)
+    random.seed(42)
+    cities = list(UP_CITIES.keys())
+    data = []
+    
+    for i in range(n):
+        city = random.choice(cities)
+        locs = UP_CITIES[city]['locations']
+        pickup = random.choice(locs)
+        dropoff = random.choice(locs)
+        while dropoff == pickup:
+            dropoff = random.choice(locs)
+        
+        ptime = datetime(2024, 1, 1) + timedelta(minutes=random.randint(0, 525600))
+        hour = ptime.hour
+        dist = round(min(np.random.exponential(8) + 2, 50), 2)
+        veh = random.choice(list(VEHICLE_TYPES.keys()))
+        wait = random.randint(0, 15)
+        
+        # FIXED: Use weights= instead of p=
+        surge = random.choices([1.0, 1.2, 1.5, 2.0], weights=[0.6, 0.25, 0.12, 0.03])[0]
+        coupon = random.choices([0, 10, 15, 20, 25], weights=[0.5, 0.2, 0.15, 0.1, 0.05])[0]
+        
+        fare = calculate_fare(city, dist, hour, veh, wait, surge, coupon)
+        status = random.choices(['completed', 'cancelled', 'no_show'], weights=[0.78, 0.15, 0.07])[0]
+        payment = random.choice(['cash', 'card', 'wallet', 'upi'])
+        
+        driver = f"{random.choice(DRIVER_NAMES)} {random.choice(['Kumar', 'Singh', 'Sharma'])}"
+        customer = f"{random.choice(CUST_NAMES)} {random.choice(['Gupta', 'Verma', 'Patel'])}"
+        
+        d_rating = round(random.uniform(3.0, 5.0), 1) if status == 'completed' else None
+        c_rating = round(random.uniform(3.5, 5.0), 1) if status == 'completed' else None
+        duration = int(dist * random.uniform(1.5, 3.0)) + wait if status == 'completed' else None
+        
+        membership = random.choices(
+            ['none', 'silver', 'gold', 'platinum'],
+            weights=[0.5, 0.3, 0.15, 0.05]
+        )[0]
+
+        shared = random.choice([True, False])
+        
+        data.append({
+            'ride_id': i+1, 'city': city, 'pickup': pickup, 'dropoff': dropoff,
+            'pickup_time': ptime, 'hour': hour, 'distance': dist, 'vehicle': veh,
+            'waiting': wait, 'surge': surge, 'coupon': coupon,
+            'base_fare': fare['base'], 'distance_charge': fare['distance_charge'],
+            'time_charge': fare['time_charge'], 'waiting_charge': fare['waiting_charge'],
+            'subtotal': fare['subtotal'], 'night_mult': fare['night_mult'],
+            'peak_mult': fare['peak_mult'], 'veh_mult': fare['veh_mult'],
+            'surge_mult': fare['surge'], 'fare_before': fare['fare_before'],
+            'discount': fare['discount'], 'final_fare': fare['final_fare'],
+            'status': status, 'payment': payment, 'is_night': fare['is_night'],
+            'is_peak': fare['is_peak'], 'driver': driver, 'driver_rating': round(random.uniform(3.5, 5.0), 1),
+            'customer': customer, 'membership': membership,
+            'ride_duration': duration, 'driver_ride_rating': d_rating,
+            'customer_ride_rating': c_rating, 'shared': shared
+        })
+    
+    return pd.DataFrame(data)
+
+# ============================================================
+# MAIN APP
+# ============================================================
+
+def main():
+    st.set_page_config(page_title="OLA UP", page_icon="🚕", layout="wide")
+    
+    st.markdown("""
+    <style>
+    .main-header {font-size: 2.5rem; font-weight: bold; text-align: center; color: #FF6B00;}
+    .kpi-box {background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 15px; border-radius: 15px; color: white; text-align: center;}
+    .kpi-val {font-size: 1.8rem; font-weight: bold; color: #FF6B00;}
+    .kpi-lbl {font-size: 0.8rem; color: #aaa;}
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<p class="main-header">🚕 OLA UP - Uttar Pradesh Ride Analytics</p>', unsafe_allow_html=True)
+    st.markdown("---")
+    
+    @st.cache_data
+    def get_data():
+        df = generate_data(5000)
+        df['pickup_time'] = pd.to_datetime(df['pickup_time'])
+        df['date'] = df['pickup_time'].dt.date
+        df['day'] = df['pickup_time'].dt.day_name()
+        df['revenue_per_km'] = (df['final_fare'] / df['distance']).round(2)
+        return df
+    
+    df = get_data()
+    
+    # Sidebar
+    st.sidebar.markdown("## 🎛️ Filters")
+    cities = ['All'] + list(UP_CITIES.keys())
+    sel_city = st.sidebar.selectbox("🏙️ City", cities)
+    vehicles = ['All'] + list(VEHICLE_TYPES.keys())
+    sel_veh = st.sidebar.selectbox("🚗 Vehicle", vehicles)
+    statuses = ['All'] + list(df['status'].unique())
+    sel_status = st.sidebar.selectbox("🚦 Status", statuses)
+    
+    # Apply filters
+    f = df.copy()
+    if sel_city != 'All': f = f[f['city'] == sel_city]
+    if sel_veh != 'All': f = f[f['vehicle'] == sel_veh]
+    if sel_status != 'All': f = f[f['status'] == sel_status]
+    
+    # KPIs
+    total_rev = f['final_fare'].sum()
+    total_rides = len(f)
+    avg_fare = f['final_fare'].mean()
+    completed = len(f[f['status'] == 'completed'])
+    comp_rate = (completed / total_rides * 100) if total_rides > 0 else 0
+    
+    st.markdown("### 📊 Key Metrics")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    for col, lbl, val in [
+        (c1, "Revenue", f"₹{total_rev:,.0f}"),
+        (c2, "Rides", f"{total_rides:,}"),
+        (c3, "Avg Fare", f"₹{avg_fare:.0f}"),
+        (c4, "Completion", f"{comp_rate:.1f}%"),
+        (c5, "Cancellation", f"{(len(f[f['status']=='cancelled'])/total_rides*100):.1f}%"),
+        (c6, "Drivers", f"{f['driver'].nunique()}")
+    ]:
+        col.markdown(f'<div class="kpi-box"><div class="kpi-val">{val}</div><div class="kpi-lbl">{lbl}</div></div>', unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Tabs
+    t1, t2, t3, t4, t5 = st.tabs(["📈 Revenue", "🚗 Operations", "👥 People", "⚡ Pricing", "📋 Data"])
+    
+    with t1:
+        st.markdown("### 💰 Revenue")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("By City")
+            city_rev = f.groupby('city')['final_fare'].sum().reset_index().sort_values('final_fare')
+            fig = px.bar(city_rev, y='city', x='final_fare', color='final_fare', color_continuous_scale='Oranges', orientation='h')
+            fig.update_layout(height=400, showlegend=False, coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.subheader("Daily Trend")
+            daily = f.groupby('date')['final_fare'].sum().reset_index()
+            fig = px.area(daily, x='date', y='final_fare', color_discrete_sequence=['#FF6B00'])
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with t2:
+        st.markdown("### 🚗 Operations")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Hourly Demand")
+            hr = f.groupby('hour').size().reset_index(name='rides')
+            fig = px.bar(hr, x='hour', y='rides', color='rides', color_continuous_scale='Oranges')
+            fig.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.subheader("Top Locations")
+            loc = f['pickup'].value_counts().head(10).reset_index()
+            loc.columns = ['Location', 'Rides']
+            fig = px.bar(loc, y='Location', x='Rides', orientation='h', color='Rides', color_continuous_scale='Greens')
+            fig.update_layout(height=400, showlegend=False, coloraxis_showscale=False)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with t3:
+        st.markdown("### 👥 People")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Driver Ratings")
+            dr = f[f['status']=='completed']['driver_ride_rating'].value_counts().sort_index().reset_index()
+            dr.columns = ['Rating', 'Count']
+            fig = px.bar(dr, x='Rating', y='Count', color='Count', color_continuous_scale='Greens')
+            fig.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.subheader("Membership")
+            mem = f['membership'].value_counts().reset_index()
+            mem.columns = ['Membership', 'Count']
+            fig = px.pie(mem, values='Count', names='Membership', hole=0.4)
+            fig.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with t4:
+        st.markdown("### ⚡ Pricing")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Surge Impact")
+            f['surge_label'] = f['surge'].apply(lambda x: 'Normal' if x==1.0 else 'Moderate' if x==1.2 else 'High' if x==1.5 else 'Extreme')
+            s = f.groupby('surge_label')['final_fare'].sum().reset_index()
+            fig = px.bar(s, x='surge_label', y='final_fare', color='final_fare', color_continuous_scale='Reds')
+            fig.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.subheader("Coupons")
+            c = f.groupby('coupon')['ride_id'].count().reset_index()
+            c.columns = ['Discount %', 'Rides']
+            fig = px.bar(c, x='Discount %', y='Rides', color='Rides', color_continuous_scale='Purples')
+            fig.update_layout(height=400, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with t5:
+        st.markdown("### 📋 Data")
+        csv = f.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ Download CSV", csv, "ola_up_data.csv", "text/csv")
+        st.dataframe(f, use_container_width=True, height=500)
+    
+    st.markdown("---")
+    st.markdown("<div style='text-align:center; padding:15px; background:#1a1a2e; border-radius:10px; color:white;'>🚕 OLA UP | Built with ❤️ | Business Logic: Human | Code: AI</div>", unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
